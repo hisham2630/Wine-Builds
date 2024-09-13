@@ -460,20 +460,33 @@ if [ "$TERMUX_GLIBC" = "true" ]; then
         exit 1
     }
     clear
+    
     elif [ "$WINE_BRANCH" = "vanilla" ]; then
-    echo "Applying esync patch"
-    patch -d wine -Np1 < "${scriptdir}"/esync.patch && \
-    echo "Applying address space patch"
-    patch -d wine -Np1 < "${scriptdir}"/termux-wine-fix.patch && \
-    echo "Applying path change patch"
-    if git -C "${BUILD_DIR}/wine" log | grep -q 4e04b2d5282e4ef769176c94b4b38b5fba006a06; then
-    patch -d wine -Np1 < "${scriptdir}"/pathfix-wine9.5.patch
-    else
-    patch -d wine -Np1 < "${scriptdir}"/pathfix.patch
-    fi || {
+    patch_dir="${scriptdir}/Patches_X"
+    
+    if [ ! -d "$patch_dir" ]; then
+        echo "Error: Patch directory $patch_dir does not exist."
+        exit 1
+    fi
+
+    for patch_file in "$patch_dir"/*.patch; do
+        if [ -f "$patch_file" ]; then
+            patch_name=$(basename "$patch_file")
+            echo "Applying patch: $patch_name"
+            if patch -d wine -Np1 < "$patch_file"; then
+                echo "Successfully applied $patch_name"
+            else
+                echo "Error: Failed to apply $patch_name"
+                exit 1
+            fi
+        fi
+    done
+
+    if [ $? -ne 0 ]; then
         echo "Error: Failed to apply one or more patches."
         exit 1
-    }
+    fi
+    
     clear
     elif [ "$WINE_BRANCH" = "staging-tkg" ]; then
     echo "Applying esync patch"
@@ -515,13 +528,14 @@ fi
 #fi
     
 # NDIS patch for fixing crappy Android's SELinux limitations.
-if [ "$TERMUX_GLIBC" = "true" ]; then
-echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
-patch -d wine -Np1 < "${scriptdir}"/ndis.patch || {
-        echo "Error: Failed to apply one or more patches."
-        exit 1
-    }
-    clear
+#if [ "$TERMUX_GLIBC" = "true" ]; then
+#echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
+#patch -d wine -Np1 < "${scriptdir}"/ndis.patch || {
+#        echo "Error: Failed to apply one or more patches."
+#       exit 1
+#   }
+#    clear
+    
 else
 echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
 patch -d wine -Np1 < "${scriptdir}"/ndis-proot.patch || {
@@ -562,15 +576,15 @@ git revert --no-commit 2bfe81e41f93ce75139e3a6a2d0b68eb2dcb8fa6 || {
     clear
 fi
 ### Experimental addition to address space hackery
-if [ "$TERMUX_GLIBC" = "true" ]; then
-echo "Applying additional address space patch... (credits to Bylaws)"
-wget -O address-space.patch https://github.com/bylaws/wine/commit/c12890cafb580764c076e4231636cafaf6e35089.patch
-patch -p1 < address-space.patch || {
-        echo "This patch did not apply. Stopping..."
-	exit 1
-    }
-    clear
-fi
+#if [ "$TERMUX_GLIBC" = "true" ]; then
+#echo "Applying additional address space patch... (credits to Bylaws)"
+#wget -O address-space.patch https://github.com/bylaws/wine/commit/c12890cafb580764c076e4231636cafaf6e35089.patch
+#patch -p1 < address-space.patch || {
+#        echo "This patch did not apply. Stopping..."
+#	exit 1
+#   }
+#   clear
+#fi
 
 ###
 dlls/winevulkan/make_vulkan
