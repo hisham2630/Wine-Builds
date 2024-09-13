@@ -536,14 +536,14 @@ fi
 #   }
 #    clear
     
-else
-echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
-patch -d wine -Np1 < "${scriptdir}"/ndis-proot.patch || {
-        echo "Error: Failed to apply one or more patches."
-        exit 1
-    }
-    clear
-fi
+#else
+#echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
+#patch -d wine -Np1 < "${scriptdir}"/ndis-proot.patch || {
+#        echo "Error: Failed to apply one or more patches."
+#        exit 1
+#    }
+#    clear
+#fi
 
 #echo "Adding virtual memory environment variable (fixes some games) (credits to BrunoSX for the initial idea)"
 #patch -d wine -Np1 < "${scriptdir}"/virtualmemory.patch || {
