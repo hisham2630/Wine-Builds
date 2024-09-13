@@ -515,7 +515,7 @@ if [ "$TERMUX_GLIBC" = "true" ]; then
     }
     clear 
 fi
-fi
+#fi
 
 # Highly experimental patch for loosening exception handling (thanks to BrunoSX for the idea)
 #if [ "$WINE_BRANCH" = "vanilla" ] || [ "$WINE_BRANCH" = "staging" ]; then
@@ -536,15 +536,14 @@ fi
 #   }
 #    clear
     
-else
-echo "fix me"
+#else
 #echo "Circumventing crappy SELinux's limitations... (Thanks BrunoSX)"
 #patch -d wine -Np1 < "${scriptdir}"/ndis-proot.patch || {
 #        echo "Error: Failed to apply one or more patches."
 #        exit 1
 #    }
 #    clear
-fi
+#fi
 
 #echo "Adding virtual memory environment variable (fixes some games) (credits to BrunoSX for the initial idea)"
 #patch -d wine -Np1 < "${scriptdir}"/virtualmemory.patch || {
