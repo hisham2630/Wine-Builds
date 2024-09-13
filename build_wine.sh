@@ -516,7 +516,6 @@ if [ "$TERMUX_GLIBC" = "true" ]; then
     clear 
 fi
 fi
-fi
 # Highly experimental patch for loosening exception handling (thanks to BrunoSX for the idea)
 #if [ "$WINE_BRANCH" = "vanilla" ] || [ "$WINE_BRANCH" = "staging" ]; then
 #echo "Loosening exception handling... (thanks BrunoSX)"
