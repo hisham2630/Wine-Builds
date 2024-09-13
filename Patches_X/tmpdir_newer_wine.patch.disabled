@@ -1,0 +1,24 @@
+diff -uNr a/server/request.c b/server/request.c
+--- a/server/request.c	2023-12-04 12:47:08.956595729 +0300
++++ b/server/request.c	2023-12-04 12:53:50.195642913 +0300
+@@ -663,7 +663,7 @@
+     if (asprintf( &base_dir, "%s/.wineserver", config_dir ) == -1)
+         fatal_error( "out of memory\n" );
+ #else
+-    if (asprintf( &base_dir, "/tmp/.wine-%u", getuid() ) == -1)
++    if (asprintf( &base_dir, "/data/data/com.darkos.x11/files/usr/tmp/.wine-%u", getuid() ) == -1)
+         fatal_error( "out of memory\n" );
+ #endif
+     create_dir( base_dir, &st2 );
+diff -uNr a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+--- a/dlls/ntdll/unix/server.c	2023-12-04 12:47:08.396593560 +0300
++++ b/dlls/ntdll/unix/server.c	2023-12-04 12:56:08.003396911 +0300
+@@ -1260,7 +1260,7 @@
+ #ifdef __ANDROID__  /* there's no /tmp dir on Android */
+     asprintf( &dir, "%s/.wineserver/server-%llx-%llx", config_dir, (unsigned long long)dev, (unsigned long long)ino );
+ #else
+-    asprintf( &dir, "/tmp/.wine-%u/server-%llx-%llx", getuid(), (unsigned long long)dev, (unsigned long long)ino );
++    asprintf( &dir, "/data/data/com.darkos.x11/files/usr/tmp/.wine-%u/server-%llx-%llx", getuid(), (unsigned long long)dev, (unsigned long long)ino );
+ #endif
+     return dir;
+ }

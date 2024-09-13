@@ -1,0 +1,12 @@
+diff -uraN wine/server/mapping.c wine2/server/mapping.c
+--- wine/server/mapping.c	2024-05-18 21:31:41.300715976 +0500
++++ wine2/server/mapping.c	2024-05-18 21:32:55.412715947 +0500
+@@ -231,7 +231,7 @@
+ {
+     page_mask = sysconf( _SC_PAGESIZE ) - 1;
+     free_map_addr( 0x60000000, 0x1c000000 );
+-    free_map_addr( 0x600000000000, 0x100000000000 );
++    free_map_addr( 0x4000000000, 0x1000000000 );
+ }
+ 
+ static void ranges_dump( struct object *obj, int verbose )

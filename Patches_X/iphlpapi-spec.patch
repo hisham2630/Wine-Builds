@@ -1,0 +1,13 @@
+diff --git a/dlls/iphlpapi/iphlpapi.spec.orig /dlls/iphlpapi/iphlpapi.spec
+index dcc15a2..575889a 100644
+--- a/dlls/iphlpapi/iphlpapi.spec.orig
++++ b/dlls/iphlpapi/iphlpapi.spec
+@@ -73,7 +73,7 @@
+ @ stdcall GetAdaptersAddresses( long long ptr ptr ptr )
+ @ stdcall GetAdaptersInfo( ptr ptr )
+ #@ stub GetAnycastIpAddressEntry
+-@ stdcall GetAnycastIpAddressTable( long ptr )
++#@ stdcall GetAnycastIpAddressTable( long ptr )
+ @ stdcall GetBestInterface( long ptr )
+ @ stdcall GetBestInterfaceEx( ptr ptr )
+ @ stub GetBestInterfaceFromStack

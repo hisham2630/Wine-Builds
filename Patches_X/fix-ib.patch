@@ -1,0 +1,110 @@
+diff -uraN wine-o/dlls/winex11.drv/event.c wine/dlls/winex11.drv/event.c
+--- wine-o/dlls/winex11.drv/event.c	2024-02-21 22:06:56.304300265 +0500
++++ wine/dlls/winex11.drv/event.c	2024-02-21 22:09:18.740966585 +0500
+@@ -771,8 +771,6 @@
+     if (is_virtual_desktop() && hwnd == NtUserGetDesktopWindow()) retry_grab_clipping_window();
+     if (hwnd == NtUserGetDesktopWindow()) return FALSE;
+ 
+-    x11drv_thread_data()->keymapnotify_hwnd = hwnd;
+-
+     /* when keyboard grab is released, re-apply the cursor clipping rect */
+     was_grabbed = keyboard_grabbed;
+     keyboard_grabbed = event->mode == NotifyGrab || event->mode == NotifyWhileGrabbed;
+diff -uraN wine-o/dlls/winex11.drv/keyboard.c wine/dlls/winex11.drv/keyboard.c
+--- wine-o/dlls/winex11.drv/keyboard.c	2024-02-21 22:06:56.304300265 +0500
++++ wine/dlls/winex11.drv/keyboard.c	2024-02-21 22:11:13.005501506 +0500
+@@ -1191,19 +1191,11 @@
+     int i, j;
+     BYTE keystate[256];
+     WORD vkey;
+-    DWORD flags;
+-    KeyCode keycode;
+-    HWND keymapnotify_hwnd;
+     BOOL changed = FALSE;
+     struct {
+         WORD vkey;
+-        WORD scan;
+         WORD pressed;
+     } keys[256];
+-    struct x11drv_thread_data *thread_data = x11drv_thread_data();
+-
+-    keymapnotify_hwnd = thread_data->keymapnotify_hwnd;
+-    thread_data->keymapnotify_hwnd = NULL;
+ 
+     if (!get_async_key_state( keystate )) return FALSE;
+ 
+@@ -1218,17 +1210,11 @@
+     {
+         for (j = 0; j < 8; j++)
+         {
+-            keycode = (i * 8) + j;
+-            vkey = keyc2vkey[keycode];
++            vkey = keyc2vkey[(i * 8) + j];
+ 
+             /* If multiple keys map to the same vkey, we want to report it as
+              * pressed iff any of them are pressed. */
+-            if (!keys[vkey & 0xff].vkey)
+-            {
+-                keys[vkey & 0xff].vkey = vkey;
+-                keys[vkey & 0xff].scan = keyc2scan[keycode] & 0xff;
+-            }
+-
++            if (!keys[vkey & 0xff].vkey) keys[vkey & 0xff].vkey = vkey;
+             if (event->xkeymap.key_vector[i] & (1<<j)) keys[vkey & 0xff].pressed = TRUE;
+         }
+     }
+@@ -1240,31 +1226,6 @@
+             TRACE( "Adjusting state for vkey %#.2x. State before %#.2x\n",
+                    keys[vkey].vkey, keystate[vkey]);
+ 
+-            /* This KeymapNotify follows a FocusIn(mode=NotifyUngrab) event,
+-             * which is caused by a keyboard grab being released.
+-             * See XGrabKeyboard().
+-             *
+-             * We might have missed some key press/release events while the
+-             * keyboard was grabbed, but keyboard grab doesn't generate focus
+-             * lost / focus gained events on the Windows side, so the affected
+-             * program is not aware that it needs to resync the keyboard state.
+-             *
+-             * This, for example, may cause Alt being stuck after using Alt+Tab.
+-             *
+-             * To work around that problem we sync any possible key releases.
+-             *
+-             * Syncing key presses is not feasible as window managers differ in
+-             * event sequences, e.g. KDE performs two keyboard grabs for
+-             * Alt+Tab, which would sync the Tab press.
+-             */
+-            if (keymapnotify_hwnd && !keys[vkey].pressed)
+-            {
+-                TRACE( "Sending KEYUP for a modifier %#.2x\n", vkey);
+-                flags = KEYEVENTF_KEYUP;
+-                if (keys[vkey].vkey & 0x1000) flags |= KEYEVENTF_EXTENDEDKEY;
+-                X11DRV_send_keyboard_input( keymapnotify_hwnd, vkey, keys[vkey].scan, flags, NtGetTickCount() );
+-            }
+-
+             update_key_state( keystate, vkey, keys[vkey].pressed );
+             changed = TRUE;
+         }
+diff -uraN wine-o/dlls/winex11.drv/mouse.c wine/dlls/winex11.drv/mouse.c
+--- wine-o/dlls/winex11.drv/mouse.c	2024-02-21 22:06:56.308300284 +0500
++++ wine/dlls/winex11.drv/mouse.c	2024-02-21 22:11:33.893585331 +0500
+@@ -1611,8 +1611,6 @@
+ 
+     TRACE( "hwnd %p/%lx pos %d,%d detail %d\n", hwnd, event->window, event->x, event->y, event->detail );
+ 
+-    x11drv_thread_data()->keymapnotify_hwnd = hwnd;
+-
+     if (hwnd == x11drv_thread_data()->grab_hwnd) return FALSE;
+ 
+     /* simulate a mouse motion event */
+diff -uraN wine-o/dlls/winex11.drv/x11drv.h wine/dlls/winex11.drv/x11drv.h
+--- wine-o/dlls/winex11.drv/x11drv.h	2024-02-21 22:06:56.308300284 +0500
++++ wine/dlls/winex11.drv/x11drv.h	2024-02-21 22:11:53.493654727 +0500
+@@ -384,7 +384,6 @@
+     XEvent  *current_event;        /* event currently being processed */
+     HWND     grab_hwnd;            /* window that currently grabs the mouse */
+     HWND     last_focus;           /* last window that had focus */
+-    HWND     keymapnotify_hwnd;    /* window that should receive modifier release events */
+     XIM      xim;                  /* input method */
+     HWND     last_xic_hwnd;        /* last xic window */
+     XFontSet font_set;             /* international text drawing font set */

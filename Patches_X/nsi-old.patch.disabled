@@ -1,0 +1,183 @@
+diff --git a/dlls/nsiproxy.sys/nsi.c.orig b/dlls/nsiproxy.sys/nsi.c
+index 2f6d2d5..a7dd70c 100644
+--- a/dlls/nsiproxy.sys/nsi.c.orig
++++ b/dlls/nsiproxy.sys/nsi.c
+@@ -49,6 +49,26 @@
+ #include "unix_private.h"
+ #include "nsiproxy_private.h"
+ 
++#include <pthread.h>
++#include <errno.h>
++#include <sys/socket.h>
++#include <linux/rtnetlink.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <net/if.h>
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#include <sys/socket.h>
++#include <fcntl.h>
++
++// Function prototypes
++void* network_monitor_thread(void* arg);
++void getNetworkInterfaces();
++char* getDefaultGateway(const char* interface);
++
+ WINE_DEFAULT_DEBUG_CHANNEL(nsi);
+ 
+ static const struct module *modules[] =
+@@ -182,14 +202,122 @@ static NTSTATUS add_notification( const NPI_MODULEID *module, UINT32 table )
+     return STATUS_SUCCESS;
+ }
+ 
++// Function to get the default gateway IP address for the given interface using traceroute
++char* getDefaultGateway(const char* interface) {
++    char command[256];
++    FILE* stream;
++    static char gateway[INET_ADDRSTRLEN];
++
++    snprintf(command, sizeof(command), "traceroute -w 1 -q 1 -i %s 8.8.8.8 | grep -m 1 '^ 2 ' | awk '{print $2}'", interface);
++    stream = popen(command, "r");
++    if (!stream) {
++        return "N/A";
++    }
++
++    if (!fgets(gateway, sizeof(gateway), stream)) {
++        pclose(stream);
++        return "N/A";
++    }
++
++    pclose(stream);
++
++    // Remove trailing newline character
++    gateway[strcspn(gateway, "\n")] = 0;
++
++    return gateway;
++}
++
++void getNetworkInterfaces() {
++    int sock;
++    struct ifconf ifc;
++    struct ifreq ifr[50];
++    int numInterfaces, i;
++
++    sock = socket(AF_INET, SOCK_DGRAM, 0);
++    if (sock < 0) {
++        perror("socket");
++        return;
++    }
++
++    ifc.ifc_len = sizeof(ifr);
++    ifc.ifc_req = ifr;
++
++    if (ioctl(sock, SIOCGIFCONF, &ifc) < 0) {
++        perror("ioctl SIOCGIFCONF");
++        close(sock);
++        return;
++    }
++
++    numInterfaces = ifc.ifc_len / sizeof(struct ifreq);
++
++    FILE *fp = fopen("/data/data/com.darkos.x11/files/usr/tmp/adapterinfo", "w");
++    if (!fp) {
++        perror("Error opening file");
++        close(sock);
++        return;
++    }
++
++    for (i = 0; i < numInterfaces; i++) {
++        struct ifreq ifr_ip = ifr[i];
++        struct ifreq ifr_hw = ifr[i];
++        struct ifreq ifr_nm = ifr[i];
++
++        // Get IP address
++        char ip[INET_ADDRSTRLEN];
++        struct sockaddr_in* ipaddr = (struct sockaddr_in*)&ifr_ip.ifr_addr;
++        inet_ntop(AF_INET, &ipaddr->sin_addr, ip, sizeof(ip));
++
++        // Get MAC address
++        unsigned char* mac = (unsigned char*)ifr_hw.ifr_hwaddr.sa_data;
++
++        // Get Netmask
++        char netmask[INET_ADDRSTRLEN];
++        struct sockaddr_in* netmaskaddr = (struct sockaddr_in*)&ifr_nm.ifr_addr;
++        inet_ntop(AF_INET, &netmaskaddr->sin_addr, netmask, sizeof(netmask));
++
++        // Get Gateway (exclude for 'lo' interface)
++        char *gateway;
++        if (strcmp(ifr[i].ifr_name, "lo") != 0) {
++            gateway = getDefaultGateway(ifr[i].ifr_name);
++        } else {
++            gateway = "N/A";
++        }
++
++        // Print to file
++        fprintf(fp, "%s,%s,%s,%s\n", ifr[i].ifr_name, ip, netmask, gateway);
++    }
++
++    fclose(fp);
++    close(sock);
++}
++
++void* _network_monitor_thread(void* arg) {
++    while (1) {
++        getNetworkInterfaces();
++        sleep(10); // Check every 10 seconds
++    }
++    return NULL;
++}
++
++void start_network_monitoring() {
++    pthread_t thread_id;
++    if (pthread_create(&thread_id, NULL, _network_monitor_thread, NULL) != 0) {
++        perror("pthread_create");
++    }
++    // Detach the thread so that it runs independently
++    pthread_detach(thread_id);
++}
++
++
+ static NTSTATUS poll_netlink(void)
+ {
++	static int monitoring_started = 0;  // Add this static variable to track the function call
+     static int netlink_fd = -1;
+     char buffer[PIPE_BUF];
+     struct nlmsghdr *nlh;
+     NTSTATUS status;
+     int len;
+-
++    
+     if (netlink_fd == -1)
+     {
+         struct sockaddr_nl addr;
+@@ -205,6 +333,13 @@ static NTSTATUS poll_netlink(void)
+         addr.nl_groups = RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR;
+         if (bind( netlink_fd, (struct sockaddr *)&addr, sizeof(addr) ) == -1)
+         {
++        	// Ensure start_network_monitoring() runs only once
++    if (!monitoring_started)
++    {
++        start_network_monitoring();
++        monitoring_started = 1;  // Set the flag to indicate the function has been called
++    }
++    
+             close( netlink_fd );
+             netlink_fd = -1;
+             ERR( "bind failed, errno %d.\n", errno );
+@@ -212,6 +347,13 @@ static NTSTATUS poll_netlink(void)
+         }
+     }
+ 
++    // Ensure start_network_monitoring() runs only once
++    if (!monitoring_started)
++    {
++        start_network_monitoring();
++        monitoring_started = 1;  // Set the flag to indicate the function has been called
++    }
++    
+     while (1)
+     {
+         len = recv( netlink_fd, buffer, sizeof(buffer), 0 );

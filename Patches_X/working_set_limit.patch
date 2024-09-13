@@ -1,0 +1,51 @@
+diff --git a/dlls/ntdll/unix/virtual.c.orig b/dlls/ntdll/unix/virtual.c
+old mode 100755
+new mode 100644
+index fb79d76..d68b16d
+--- a/dlls/ntdll/unix/virtual.c.orig
++++ b/dlls/ntdll/unix/virtual.c
+@@ -4474,7 +4474,34 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
+ 
+     /* Round parameters to a page boundary */
+ 
+-    if (is_beyond_limit( 0, size, working_set_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
++   // if (is_beyond_limit( 0, size, working_set_limit )) return STATUS_WORKING_SET_LIMIT_RANGE;
++   
++    char *wineWorkingSetLimitStr = getenv("WINE_WORKING_SET_LIMIT");
++
++static int printedMessage = 0; // Flag to track if message has been printed, static to retain value between calls
++
++// Check if not set or contains non-numeric characters
++if (wineWorkingSetLimitStr == NULL || 
++    !strlen(wineWorkingSetLimitStr) || 
++    !strspn(wineWorkingSetLimitStr, "0123456789")) {
++
++    if (is_beyond_limit(0, size, working_set_limit) || size > 4096L << 20) {
++        if (!printedMessage) { // Print only if not already printed
++            fprintf(stderr, "working_set_limit is set to 4096MB (Default)\n");
++            printedMessage = 1; // Mark the message as printed
++        }
++        return STATUS_WORKING_SET_LIMIT_RANGE;
++    }
++} else { // Valid numeric input
++    long wineWorkingSetLimit = strtol(wineWorkingSetLimitStr, NULL, 10);
++    if (is_beyond_limit(0, size, working_set_limit) || size > (wineWorkingSetLimit << 20)) {
++        if (!printedMessage) { // Print only if not already printed
++            fprintf(stderr, "working_set_limit is set to %ld MB\n", wineWorkingSetLimit);
++            printedMessage = 1; // Mark the message as printed
++        }
++        return STATUS_WORKING_SET_LIMIT_RANGE;
++    }
++}
+ 
+     if (*ret)
+     {
+@@ -4573,7 +4600,7 @@ static NTSTATUS allocate_virtual_memory( void **ret, SIZE_T *size_ptr, ULONG typ
+     }
+     else if (status == STATUS_NO_MEMORY)
+         ERR( "out of memory for allocation, base %p size %08lx\n", base, size );
+-
++    
+     return status;
+ }
+ 

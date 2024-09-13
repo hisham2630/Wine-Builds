@@ -1,0 +1,992 @@
+From f380e34a5e94371f691179711e6ce4697be0da61 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Tue, 20 Feb 2024 21:07:13 +0100
+Subject: [PATCH 1/6] winevulkan: Update to VK spec version 1.3.278.
+
+The new spec uses length attribute for some static arrays. Change is_dynamic_array
+to account account for that. Eventually we could use the new information to improve
+conversion thunks.
+---
+ dlls/winevulkan/make_vulkan     |   5 +-
+ dlls/winevulkan/vulkan_thunks.c | 192 ++++++++++++++++++++++++++++----
+ dlls/winevulkan/winevulkan.json |   2 +-
+ include/wine/vulkan.h           |  55 ++++++++-
+ 4 files changed, 228 insertions(+), 26 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 9c39221509e..6501c7ad6c9 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -64,7 +64,7 @@ from enum import Enum
+ LOGGER = logging.Logger("vulkan")
+ LOGGER.addHandler(logging.StreamHandler())
+ 
+-VK_XML_VERSION = "1.3.277"
++VK_XML_VERSION = "1.3.278"
+ WINE_VK_VERSION = (1, 3)
+ 
+ # Filenames to create.
+@@ -129,6 +129,7 @@ UNSUPPORTED_EXTENSIONS = [
+ # winevulkan may nonetheless use, or extensions we want to generate headers for
+ # but not expose to applications (useful for test commits)
+ UNEXPOSED_EXTENSIONS = {
++    "VK_EXT_map_memory_placed",
+     "VK_KHR_external_memory_win32",
+ }
+ 
+@@ -1315,7 +1316,7 @@ class VkVariable(object):
+         Vulkan uses this for dynamically sized arrays for which
+         there is a 'count' parameter.
+         """
+-        return self.dyn_array_len is not None
++        return self.dyn_array_len is not None and self.array_len is None
+ 
+     def is_static_array(self):
+         """ Returns if the member is an array.
+diff --git a/dlls/winevulkan/vulkan_thunks.c b/dlls/winevulkan/vulkan_thunks.c
+index a95e935e959..ad1a1e3cbf1 100644
+--- a/dlls/winevulkan/vulkan_thunks.c
++++ b/dlls/winevulkan/vulkan_thunks.c
+@@ -3297,6 +3297,22 @@ typedef struct VkPhysicalDeviceShaderQuadControlFeaturesKHR32
+     VkBool32 shaderQuadControl;
+ } VkPhysicalDeviceShaderQuadControlFeaturesKHR32;
+ 
++typedef struct VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32
++{
++    VkStructureType sType;
++    PTR32 pNext;
++    VkBool32 shaderFloat16VectorAtomics;
++} VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32;
++
++typedef struct VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32
++{
++    VkStructureType sType;
++    PTR32 pNext;
++    VkBool32 memoryMapPlaced;
++    VkBool32 memoryMapRangePlaced;
++    VkBool32 memoryUnmapReserve;
++} VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32;
++
+ typedef struct VkDeviceCreateInfo32
+ {
+     VkStructureType sType;
+@@ -6385,6 +6401,13 @@ typedef struct VkPhysicalDeviceRenderPassStripedPropertiesARM32
+     uint32_t maxRenderPassStripes;
+ } VkPhysicalDeviceRenderPassStripedPropertiesARM32;
+ 
++typedef struct VkPhysicalDeviceMapMemoryPlacedPropertiesEXT32
++{
++    VkStructureType sType;
++    PTR32 pNext;
++    VkDeviceSize DECLSPEC_ALIGN(8) minPlacedMemoryMapAlignment;
++} VkPhysicalDeviceMapMemoryPlacedPropertiesEXT32;
++
+ typedef struct VkPhysicalDeviceProperties232
+ {
+     VkStructureType sType;
+@@ -6649,6 +6672,13 @@ typedef struct VkLatencySleepInfoNV32
+     uint64_t DECLSPEC_ALIGN(8) value;
+ } VkLatencySleepInfoNV32;
+ 
++typedef struct VkMemoryMapPlacedInfoEXT32
++{
++    VkStructureType sType;
++    PTR32 pNext;
++    PTR32 pPlacedAddress;
++} VkMemoryMapPlacedInfoEXT32;
++
+ typedef struct VkMemoryMapInfoKHR32
+ {
+     VkStructureType sType;
+@@ -13608,6 +13638,30 @@ static inline void convert_VkDeviceCreateInfo_win64_to_host(struct conversion_co
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV:
++        {
++            VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *in_ext = (const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV;
++            out_ext->pNext = NULL;
++            out_ext->shaderFloat16VectorAtomics = in_ext->shaderFloat16VectorAtomics;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *in_ext = (const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
++            out_ext->pNext = NULL;
++            out_ext->memoryMapPlaced = in_ext->memoryMapPlaced;
++            out_ext->memoryMapRangePlaced = in_ext->memoryMapRangePlaced;
++            out_ext->memoryUnmapReserve = in_ext->memoryUnmapReserve;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             FIXME("Unhandled sType %u.\n", in_header->sType);
+             break;
+@@ -15867,6 +15921,30 @@ static inline void convert_VkDeviceCreateInfo_win32_to_host(struct conversion_co
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV:
++        {
++            VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32 *in_ext = (const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32 *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV;
++            out_ext->pNext = NULL;
++            out_ext->shaderFloat16VectorAtomics = in_ext->shaderFloat16VectorAtomics;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32 *in_ext = (const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32 *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
++            out_ext->pNext = NULL;
++            out_ext->memoryMapPlaced = in_ext->memoryMapPlaced;
++            out_ext->memoryMapRangePlaced = in_ext->memoryMapRangePlaced;
++            out_ext->memoryUnmapReserve = in_ext->memoryUnmapReserve;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             FIXME("Unhandled sType %u.\n", in_header->sType);
+             break;
+@@ -20699,20 +20777,6 @@ static inline void convert_VkLatencyTimingsFrameReportNV_win32_to_host(const VkL
+ 
+     out->sType = in->sType;
+     out->pNext = NULL;
+-    out->presentID = in->presentID;
+-    out->inputSampleTimeUs = in->inputSampleTimeUs;
+-    out->simStartTimeUs = in->simStartTimeUs;
+-    out->simEndTimeUs = in->simEndTimeUs;
+-    out->renderSubmitStartTimeUs = in->renderSubmitStartTimeUs;
+-    out->renderSubmitEndTimeUs = in->renderSubmitEndTimeUs;
+-    out->presentStartTimeUs = in->presentStartTimeUs;
+-    out->presentEndTimeUs = in->presentEndTimeUs;
+-    out->driverStartTimeUs = in->driverStartTimeUs;
+-    out->driverEndTimeUs = in->driverEndTimeUs;
+-    out->osRenderQueueStartTimeUs = in->osRenderQueueStartTimeUs;
+-    out->osRenderQueueEndTimeUs = in->osRenderQueueEndTimeUs;
+-    out->gpuRenderStartTimeUs = in->gpuRenderStartTimeUs;
+-    out->gpuRenderEndTimeUs = in->gpuRenderEndTimeUs;
+     if (in->pNext)
+         FIXME("Unexpected pNext\n");
+ }
+@@ -23266,6 +23330,30 @@ static inline void convert_VkPhysicalDeviceFeatures2_win32_to_host(struct conver
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV:
++        {
++            VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32 *in_ext = (const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32 *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV;
++            out_ext->pNext = NULL;
++            out_ext->shaderFloat16VectorAtomics = in_ext->shaderFloat16VectorAtomics;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32 *in_ext = (const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32 *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
++            out_ext->pNext = NULL;
++            out_ext->memoryMapPlaced = in_ext->memoryMapPlaced;
++            out_ext->memoryMapRangePlaced = in_ext->memoryMapRangePlaced;
++            out_ext->memoryUnmapReserve = in_ext->memoryUnmapReserve;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             FIXME("Unhandled sType %u.\n", in_header->sType);
+             break;
+@@ -25087,6 +25175,26 @@ static inline void convert_VkPhysicalDeviceFeatures2_host_to_win32(const VkPhysi
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV:
++        {
++            VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV);
++            const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *in_ext = (const VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV;
++            out_ext->shaderFloat16VectorAtomics = in_ext->shaderFloat16VectorAtomics;
++            out_header = (void *)out_ext;
++            break;
++        }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedFeaturesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT);
++            const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *in_ext = (const VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
++            out_ext->memoryMapPlaced = in_ext->memoryMapPlaced;
++            out_ext->memoryMapRangePlaced = in_ext->memoryMapRangePlaced;
++            out_ext->memoryUnmapReserve = in_ext->memoryUnmapReserve;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             break;
+         }
+@@ -26533,6 +26641,15 @@ static inline void convert_VkPhysicalDeviceProperties2_win32_to_host(struct conv
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedPropertiesEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT;
++            out_ext->pNext = NULL;
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             FIXME("Unhandled sType %u.\n", in_header->sType);
+             break;
+@@ -27708,6 +27825,15 @@ static inline void convert_VkPhysicalDeviceProperties2_host_to_win32(const VkPhy
+             out_header = (void *)out_ext;
+             break;
+         }
++        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT:
++        {
++            VkPhysicalDeviceMapMemoryPlacedPropertiesEXT32 *out_ext = find_next_struct32(out_header, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT);
++            const VkPhysicalDeviceMapMemoryPlacedPropertiesEXT *in_ext = (const VkPhysicalDeviceMapMemoryPlacedPropertiesEXT *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT;
++            out_ext->minPlacedMemoryMapAlignment = in_ext->minPlacedMemoryMapAlignment;
++            out_header = (void *)out_ext;
++            break;
++        }
+         default:
+             break;
+         }
+@@ -27744,11 +27870,8 @@ static inline void convert_VkQueueFamilyProperties2_win32_to_host(struct convers
+         case VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES_KHR:
+         {
+             VkQueueFamilyGlobalPriorityPropertiesKHR *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
+-            const VkQueueFamilyGlobalPriorityPropertiesKHR32 *in_ext = (const VkQueueFamilyGlobalPriorityPropertiesKHR32 *)in_header;
+             out_ext->sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES_KHR;
+             out_ext->pNext = NULL;
+-            out_ext->priorityCount = in_ext->priorityCount;
+-            memcpy(out_ext->priorities, in_ext->priorities, VK_MAX_GLOBAL_PRIORITY_SIZE_KHR * sizeof(VkQueueGlobalPriorityKHR));
+             out_header->pNext = (void *)out_ext;
+             out_header = (void *)out_ext;
+             break;
+@@ -28624,8 +28747,11 @@ static inline void convert_VkLatencySleepInfoNV_win32_to_host(const VkLatencySle
+         FIXME("Unexpected pNext\n");
+ }
+ 
+-static inline void convert_VkMemoryMapInfoKHR_win32_to_unwrapped_host(const VkMemoryMapInfoKHR32 *in, VkMemoryMapInfoKHR *out)
++static inline void convert_VkMemoryMapInfoKHR_win32_to_unwrapped_host(struct conversion_context *ctx, const VkMemoryMapInfoKHR32 *in, VkMemoryMapInfoKHR *out)
+ {
++    const VkBaseInStructure32 *in_header;
++    VkBaseOutStructure *out_header = (void *)out;
++
+     if (!in) return;
+ 
+     out->sType = in->sType;
+@@ -28634,8 +28760,27 @@ static inline void convert_VkMemoryMapInfoKHR_win32_to_unwrapped_host(const VkMe
+     out->memory = in->memory;
+     out->offset = in->offset;
+     out->size = in->size;
+-    if (in->pNext)
+-        FIXME("Unexpected pNext\n");
++
++    for (in_header = UlongToPtr(in->pNext); in_header; in_header = UlongToPtr(in_header->pNext))
++    {
++        switch (in_header->sType)
++        {
++        case VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT:
++        {
++            VkMemoryMapPlacedInfoEXT *out_ext = conversion_context_alloc(ctx, sizeof(*out_ext));
++            const VkMemoryMapPlacedInfoEXT32 *in_ext = (const VkMemoryMapPlacedInfoEXT32 *)in_header;
++            out_ext->sType = VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT;
++            out_ext->pNext = NULL;
++            out_ext->pPlacedAddress = (void *)UlongToPtr(in_ext->pPlacedAddress);
++            out_header->pNext = (void *)out_ext;
++            out_header = (void *)out_ext;
++            break;
++        }
++        default:
++            FIXME("Unhandled sType %u.\n", in_header->sType);
++            break;
++        }
++    }
+ }
+ 
+ #ifdef _WIN64
+@@ -44705,11 +44850,15 @@ static NTSTATUS thunk32_vkMapMemory2KHR(void *args)
+         VkResult result;
+     } *params = args;
+     VkMemoryMapInfoKHR pMemoryMapInfo_host;
++    struct conversion_context local_ctx;
++    struct conversion_context *ctx = &local_ctx;
+ 
+     TRACE("%#x, %#x, %#x\n", params->device, params->pMemoryMapInfo, params->ppData);
+ 
+-    convert_VkMemoryMapInfoKHR_win32_to_unwrapped_host((const VkMemoryMapInfoKHR32 *)UlongToPtr(params->pMemoryMapInfo), &pMemoryMapInfo_host);
++    init_conversion_context(ctx);
++    convert_VkMemoryMapInfoKHR_win32_to_unwrapped_host(ctx, (const VkMemoryMapInfoKHR32 *)UlongToPtr(params->pMemoryMapInfo), &pMemoryMapInfo_host);
+     params->result = wine_vkMapMemory2KHR((VkDevice)UlongToPtr(params->device), &pMemoryMapInfo_host, (void **)UlongToPtr(params->ppData));
++    free_conversion_context(ctx);
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -46484,6 +46633,7 @@ static const char * const vk_device_extensions[] =
+     "VK_NV_representative_fragment_test",
+     "VK_NV_sample_mask_override_coverage",
+     "VK_NV_scissor_exclusive",
++    "VK_NV_shader_atomic_float16_vector",
+     "VK_NV_shader_image_footprint",
+     "VK_NV_shader_sm_builtins",
+     "VK_NV_shader_subgroup_partitioned",
+diff --git a/dlls/winevulkan/winevulkan.json b/dlls/winevulkan/winevulkan.json
+index c6dc93ff0c1..3da205fa21d 100644
+--- a/dlls/winevulkan/winevulkan.json
++++ b/dlls/winevulkan/winevulkan.json
+@@ -2,6 +2,6 @@
+     "file_format_version": "1.0.0",
+     "ICD": {
+         "library_path": ".\\winevulkan.dll",
+-        "api_version": "1.3.277"
++        "api_version": "1.3.278"
+     }
+ }
+diff --git a/include/wine/vulkan.h b/include/wine/vulkan.h
+index c07c576c01b..568bc36e405 100644
+--- a/include/wine/vulkan.h
++++ b/include/wine/vulkan.h
+@@ -415,6 +415,8 @@
+ #define VK_EXT_HOST_IMAGE_COPY_EXTENSION_NAME "VK_EXT_host_image_copy"
+ #define VK_KHR_MAP_MEMORY_2_SPEC_VERSION 1
+ #define VK_KHR_MAP_MEMORY_2_EXTENSION_NAME "VK_KHR_map_memory2"
++#define VK_EXT_MAP_MEMORY_PLACED_SPEC_VERSION 1
++#define VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME "VK_EXT_map_memory_placed"
+ #define VK_EXT_SHADER_ATOMIC_FLOAT_2_SPEC_VERSION 1
+ #define VK_EXT_SHADER_ATOMIC_FLOAT_2_EXTENSION_NAME "VK_EXT_shader_atomic_float2"
+ #define VK_EXT_SURFACE_MAINTENANCE_1_SPEC_VERSION 1
+@@ -669,6 +671,8 @@
+ #define VK_KHR_MAINTENANCE_6_EXTENSION_NAME "VK_KHR_maintenance6"
+ #define VK_NV_DESCRIPTOR_POOL_OVERALLOCATION_SPEC_VERSION 1
+ #define VK_NV_DESCRIPTOR_POOL_OVERALLOCATION_EXTENSION_NAME "VK_NV_descriptor_pool_overallocation"
++#define VK_NV_SHADER_ATOMIC_FLOAT16_VECTOR_SPEC_VERSION 1
++#define VK_NV_SHADER_ATOMIC_FLOAT16_VECTOR_EXTENSION_NAME "VK_NV_shader_atomic_float16_vector"
+ #define VK_KHR_ACCELERATION_STRUCTURE_SPEC_VERSION 13
+ #define VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME "VK_KHR_acceleration_structure"
+ #define VK_KHR_RAY_TRACING_PIPELINE_SPEC_VERSION 1
+@@ -695,7 +699,7 @@
+ #define VK_API_VERSION_1_2 VK_MAKE_API_VERSION(0, 1, 2, 0)
+ #define VK_API_VERSION_1_3 VK_MAKE_API_VERSION(0, 1, 3, 0)
+ #define VKSC_API_VERSION_1_0 VK_MAKE_API_VERSION(VKSC_API_VARIANT, 1, 0, 0)
+-#define VK_HEADER_VERSION 277
++#define VK_HEADER_VERSION 278
+ #define VK_HEADER_VERSION_COMPLETE VK_MAKE_API_VERSION(0, 1, 3, VK_HEADER_VERSION)
+ #define VK_DEFINE_HANDLE(object) typedef struct object##_T* object;
+ #define VK_USE_64_BIT_PTR_DEFINES 0
+@@ -2969,6 +2973,12 @@ typedef enum VkMemoryHeapFlagBits
+     VK_MEMORY_HEAP_FLAG_BITS_MAX_ENUM = 0x7fffffff,
+ } VkMemoryHeapFlagBits;
+ 
++typedef enum VkMemoryMapFlagBits
++{
++    VK_MEMORY_MAP_PLACED_BIT_EXT = 0x00000001,
++    VK_MEMORY_MAP_FLAG_BITS_MAX_ENUM = 0x7fffffff,
++} VkMemoryMapFlagBits;
++
+ typedef enum VkMemoryOverallocationBehaviorAMD
+ {
+     VK_MEMORY_OVERALLOCATION_BEHAVIOR_DEFAULT_AMD = 0,
+@@ -2990,6 +3000,12 @@ typedef enum VkMemoryPropertyFlagBits
+     VK_MEMORY_PROPERTY_FLAG_BITS_MAX_ENUM = 0x7fffffff,
+ } VkMemoryPropertyFlagBits;
+ 
++typedef enum VkMemoryUnmapFlagBitsKHR
++{
++    VK_MEMORY_UNMAP_RESERVE_BIT_EXT = 0x00000001,
++    VK_MEMORY_UNMAP_FLAG_BITS_KHR_MAX_ENUM = 0x7fffffff,
++} VkMemoryUnmapFlagBitsKHR;
++
+ typedef enum VkMicromapCreateFlagBitsEXT
+ {
+     VK_MICROMAP_CREATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_EXT = 0x00000001,
+@@ -3785,7 +3801,7 @@ typedef enum VkResult
+     VK_OPERATION_DEFERRED_KHR = 1000268002,
+     VK_OPERATION_NOT_DEFERRED_KHR = 1000268003,
+     VK_PIPELINE_COMPILE_REQUIRED = 1000297000,
+-    VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT = 1000482000,
++    VK_INCOMPATIBLE_SHADER_BINARY_EXT = 1000482000,
+     VK_ERROR_OUT_OF_POOL_MEMORY_KHR = VK_ERROR_OUT_OF_POOL_MEMORY,
+     VK_ERROR_INVALID_EXTERNAL_HANDLE_KHR = VK_ERROR_INVALID_EXTERNAL_HANDLE,
+     VK_ERROR_FRAGMENTATION_EXT = VK_ERROR_FRAGMENTATION,
+@@ -3794,6 +3810,7 @@ typedef enum VkResult
+     VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS_KHR = VK_ERROR_INVALID_OPAQUE_CAPTURE_ADDRESS,
+     VK_PIPELINE_COMPILE_REQUIRED_EXT = VK_PIPELINE_COMPILE_REQUIRED,
+     VK_ERROR_PIPELINE_COMPILE_REQUIRED_EXT = VK_PIPELINE_COMPILE_REQUIRED,
++    VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT = VK_INCOMPATIBLE_SHADER_BINARY_EXT,
+     VK_RESULT_MAX_ENUM = 0x7fffffff,
+ } VkResult;
+ 
+@@ -4453,6 +4470,9 @@ typedef enum VkStructureType
+     VK_STRUCTURE_TYPE_HOST_IMAGE_COPY_DEVICE_PERFORMANCE_QUERY_EXT = 1000270009,
+     VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR = 1000271000,
+     VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR = 1000271001,
++    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT = 1000272000,
++    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT = 1000272001,
++    VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT = 1000272002,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT_2_FEATURES_EXT = 1000273000,
+     VK_STRUCTURE_TYPE_SURFACE_PRESENT_MODE_EXT = 1000274000,
+     VK_STRUCTURE_TYPE_SURFACE_PRESENT_SCALING_CAPABILITIES_EXT = 1000274001,
+@@ -4748,6 +4768,7 @@ typedef enum VkStructureType
+     VK_STRUCTURE_TYPE_SET_DESCRIPTOR_BUFFER_OFFSETS_INFO_EXT = 1000545007,
+     VK_STRUCTURE_TYPE_BIND_DESCRIPTOR_BUFFER_EMBEDDED_SAMPLERS_INFO_EXT = 1000545008,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_POOL_OVERALLOCATION_FEATURES_NV = 1000546000,
++    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_FLOAT16_VECTOR_FEATURES_NV = 1000563000,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VARIABLE_POINTER_FEATURES = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VARIABLE_POINTERS_FEATURES,
+     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETER_FEATURES = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+     VK_STRUCTURE_TYPE_DEBUG_REPORT_CREATE_INFO_EXT = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+@@ -7153,6 +7174,13 @@ typedef struct VkMemoryMapInfoKHR
+     VkDeviceSize WINE_VK_ALIGN(8) size;
+ } VkMemoryMapInfoKHR;
+ 
++typedef struct VkMemoryMapPlacedInfoEXT
++{
++    VkStructureType sType;
++    const void *pNext;
++    void *pPlacedAddress;
++} VkMemoryMapPlacedInfoEXT;
++
+ typedef struct VkMemoryOpaqueCaptureAddressAllocateInfo
+ {
+     VkStructureType sType;
+@@ -8789,6 +8817,22 @@ typedef struct VkPhysicalDeviceMaintenance6PropertiesKHR
+     VkBool32 fragmentShadingRateClampCombinerInputs;
+ } VkPhysicalDeviceMaintenance6PropertiesKHR;
+ 
++typedef struct VkPhysicalDeviceMapMemoryPlacedFeaturesEXT
++{
++    VkStructureType sType;
++    void *pNext;
++    VkBool32 memoryMapPlaced;
++    VkBool32 memoryMapRangePlaced;
++    VkBool32 memoryUnmapReserve;
++} VkPhysicalDeviceMapMemoryPlacedFeaturesEXT;
++
++typedef struct VkPhysicalDeviceMapMemoryPlacedPropertiesEXT
++{
++    VkStructureType sType;
++    void *pNext;
++    VkDeviceSize WINE_VK_ALIGN(8) minPlacedMemoryMapAlignment;
++} VkPhysicalDeviceMapMemoryPlacedPropertiesEXT;
++
+ typedef struct VkPhysicalDeviceMemoryBudgetPropertiesEXT
+ {
+     VkStructureType sType;
+@@ -9421,6 +9465,13 @@ typedef struct VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures
+ } VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures;
+ typedef VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures VkPhysicalDeviceSeparateDepthStencilLayoutsFeaturesKHR;
+ 
++typedef struct VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV
++{
++    VkStructureType sType;
++    void *pNext;
++    VkBool32 shaderFloat16VectorAtomics;
++} VkPhysicalDeviceShaderAtomicFloat16VectorFeaturesNV;
++
+ typedef struct VkPhysicalDeviceShaderAtomicFloat2FeaturesEXT
+ {
+     VkStructureType sType;
+-- 
+2.40.1
+
+
+From 7995f3813c9df22a752d59500b3a9f3e625b1fa0 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Tue, 20 Feb 2024 21:26:32 +0100
+Subject: [PATCH 2/6] winevulkan: Remove no longer needed spec workarounds.
+
+---
+ dlls/winevulkan/make_vulkan | 7 ++-----
+ 1 file changed, 2 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/winevulkan/make_vulkan b/dlls/winevulkan/make_vulkan
+index 6501c7ad6c9..bf7e0f6408d 100755
+--- a/dlls/winevulkan/make_vulkan
++++ b/dlls/winevulkan/make_vulkan
+@@ -2032,14 +2032,11 @@ class VkStruct(Sequence):
+ 
+         # Those structs seem to be broken in spec, they are specified as
+         # returned only, but documented as input structs.
+-        if name in ["VkSubpassShadingPipelineCreateInfoHUAWEI",
+-                    "VkPipelineShaderStageRequiredSubgroupSizeCreateInfo"]:
++        if name in ["VkPipelineShaderStageRequiredSubgroupSizeCreateInfo"]:
+             returnedonly = False
+ 
+         # Those structs don't have returnedonly in spec, but they could (should?).
+-        if name in ["VkSurfaceCapabilitiesPresentBarrierNV",
+-                    "VkCooperativeMatrixPropertiesNV",
+-                    "VkPerformanceValueINTEL"]:
++        if name in ["VkSurfaceCapabilitiesPresentBarrierNV"]:
+             returnedonly = True
+ 
+         structextends = struct.attrib.get("structextends")
+-- 
+2.40.1
+
+
+From 84e462070658464576e73c8a836ccab8fb296734 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Wed, 21 Feb 2024 14:28:49 +0100
+Subject: [PATCH 3/6] winevulkan: Rename wine_device_memory mapping to vm_map.
+
+To avoid conflict with handle mapping macros.
+---
+ dlls/winevulkan/vulkan.c         | 12 ++++++------
+ dlls/winevulkan/vulkan_private.h |  2 +-
+ 2 files changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 01d2a0c20a0..9d7498d8803 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -1703,7 +1703,7 @@ VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *allo
+         return result;
+     }
+ 
+-    memory->mapping = mapping;
++    memory->vm_map = mapping;
+     *ret = (VkDeviceMemory)(uintptr_t)memory;
+     return VK_SUCCESS;
+ }
+@@ -1719,10 +1719,10 @@ void wine_vkFreeMemory(VkDevice handle, VkDeviceMemory memory_handle, const VkAl
+ 
+     device->funcs.p_vkFreeMemory(device->host_device, memory->host_memory, NULL);
+ 
+-    if (memory->mapping)
++    if (memory->vm_map)
+     {
+         SIZE_T alloc_size = 0;
+-        NtFreeVirtualMemory(GetCurrentProcess(), &memory->mapping, &alloc_size, MEM_RELEASE);
++        NtFreeVirtualMemory(GetCurrentProcess(), &memory->vm_map, &alloc_size, MEM_RELEASE);
+     }
+ 
+     free(memory);
+@@ -1751,9 +1751,9 @@ VkResult wine_vkMapMemory2KHR(VkDevice handle, const VkMemoryMapInfoKHR *map_inf
+     VkResult result;
+ 
+     info.memory = memory->host_memory;
+-    if (memory->mapping)
++    if (memory->vm_map)
+     {
+-        *data = (char *)memory->mapping + info.offset;
++        *data = (char *)memory->vm_map + info.offset;
+         TRACE("returning %p\n", *data);
+         return VK_SUCCESS;
+     }
+@@ -1799,7 +1799,7 @@ VkResult wine_vkUnmapMemory2KHR(VkDevice handle, const VkMemoryUnmapInfoKHR *unm
+     struct wine_device_memory *memory = wine_device_memory_from_handle(unmap_info->memory);
+     VkMemoryUnmapInfoKHR info;
+ 
+-    if (memory->mapping)
++    if (memory->vm_map)
+         return VK_SUCCESS;
+ 
+     if (!device->funcs.p_vkUnmapMemory2KHR)
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index 4e4d665299f..8ef065ac514 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -175,7 +175,7 @@ static inline struct wine_cmd_pool *wine_cmd_pool_from_handle(VkCommandPool hand
+ struct wine_device_memory
+ {
+     VkDeviceMemory host_memory;
+-    void *mapping;
++    void *vm_map;
+ };
+ 
+ static inline struct wine_device_memory *wine_device_memory_from_handle(VkDeviceMemory handle)
+-- 
+2.40.1
+
+
+From 64914849ac42cebd6d6f6b88ae8b16d22e493184 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Wed, 21 Feb 2024 14:48:13 +0100
+Subject: [PATCH 4/6] winevulkan: Use handle map for memory objects.
+
+---
+ dlls/winevulkan/vulkan.c         | 2 ++
+ dlls/winevulkan/vulkan_private.h | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 9d7498d8803..673a982548d 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -1703,6 +1703,7 @@ VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *allo
+         return result;
+     }
+ 
++    WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, memory, memory->host_memory, memory);
+     memory->vm_map = mapping;
+     *ret = (VkDeviceMemory)(uintptr_t)memory;
+     return VK_SUCCESS;
+@@ -1717,6 +1718,7 @@ void wine_vkFreeMemory(VkDevice handle, VkDeviceMemory memory_handle, const VkAl
+         return;
+     memory = wine_device_memory_from_handle(memory_handle);
+ 
++    WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, memory);
+     device->funcs.p_vkFreeMemory(device->host_device, memory->host_memory, NULL);
+ 
+     if (memory->vm_map)
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index 8ef065ac514..fd5d58870cc 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -176,6 +176,8 @@ struct wine_device_memory
+ {
+     VkDeviceMemory host_memory;
+     void *vm_map;
++
++    struct wine_vk_mapping mapping;
+ };
+ 
+ static inline struct wine_device_memory *wine_device_memory_from_handle(VkDeviceMemory handle)
+-- 
+2.40.1
+
+
+From d8e0c8adea7fc6201ed0c322c01ecdcb6aa98c26 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Wed, 21 Feb 2024 17:25:39 +0100
+Subject: [PATCH 5/6] winevulkan: Refactor extra extensions handling in
+ wine_vk_device_convert_create_info.
+
+---
+ dlls/winevulkan/vulkan.c | 37 +++++++++++++++++++++++++++----------
+ 1 file changed, 27 insertions(+), 10 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 673a982548d..93a36f28469 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -391,10 +391,21 @@ static void wine_vk_device_get_queues(struct wine_device *device,
+     }
+ }
+ 
++static const char *find_extension(const char *const *extensions, uint32_t count, const char *ext)
++{
++    while (count--)
++    {
++        if (!strcmp(extensions[count], ext))
++            return extensions[count];
++    }
++    return NULL;
++}
++
+ static VkResult wine_vk_device_convert_create_info(struct wine_phys_dev *phys_dev,
+         struct conversion_context *ctx, const VkDeviceCreateInfo *src, VkDeviceCreateInfo *dst)
+ {
+-    unsigned int i;
++    const char *extra_extensions[2], * const*extensions = src->ppEnabledExtensionNames;
++    unsigned int i, extra_count = 0, extensions_count = src->enabledExtensionCount;
+ 
+     *dst = *src;
+ 
+@@ -402,10 +413,10 @@ static VkResult wine_vk_device_convert_create_info(struct wine_phys_dev *phys_de
+     dst->enabledLayerCount = 0;
+     dst->ppEnabledLayerNames = NULL;
+ 
+-    TRACE("Enabled %u extensions.\n", dst->enabledExtensionCount);
+-    for (i = 0; i < dst->enabledExtensionCount; i++)
++    TRACE("Enabled %u extensions.\n", extensions_count);
++    for (i = 0; i < extensions_count; i++)
+     {
+-        const char *extension_name = dst->ppEnabledExtensionNames[i];
++        const char *extension_name = extensions[i];
+         TRACE("Extension %u: %s.\n", i, debugstr_a(extension_name));
+         if (!wine_vk_device_extension_supported(extension_name))
+         {
+@@ -415,15 +426,21 @@ static VkResult wine_vk_device_convert_create_info(struct wine_phys_dev *phys_de
+     }
+ 
+     if (phys_dev->external_memory_align)
++    {
++        if (!find_extension(extensions, extensions_count, "VK_KHR_external_memory"))
++            extra_extensions[extra_count++] = "VK_KHR_external_memory";
++        if (!find_extension(extensions, extensions_count, "VK_EXT_external_memory_host"))
++            extra_extensions[extra_count++] = "VK_EXT_external_memory_host";
++    }
++
++    if (extra_count)
+     {
+         const char **new_extensions;
+ 
+-        new_extensions = conversion_context_alloc(ctx, (dst->enabledExtensionCount + 2) *
+-                                                  sizeof(*dst->ppEnabledExtensionNames));
+-        memcpy(new_extensions, src->ppEnabledExtensionNames,
+-               dst->enabledExtensionCount * sizeof(*dst->ppEnabledExtensionNames));
+-        new_extensions[dst->enabledExtensionCount++] = "VK_KHR_external_memory";
+-        new_extensions[dst->enabledExtensionCount++] = "VK_EXT_external_memory_host";
++        dst->enabledExtensionCount += extra_count;
++        new_extensions = conversion_context_alloc(ctx, dst->enabledExtensionCount * sizeof(*new_extensions));
++        memcpy(new_extensions, extensions, extensions_count * sizeof(*new_extensions));
++        memcpy(new_extensions + extensions_count, extra_extensions, extra_count * sizeof(*new_extensions));
+         dst->ppEnabledExtensionNames = new_extensions;
+     }
+ 
+-- 
+2.40.1
+
+
+From 1999e4f3f51c805a96e93fdf62bec0b200912229 Mon Sep 17 00:00:00 2001
+From: Jacek Caban <jacek@codeweavers.com>
+Date: Mon, 26 Feb 2024 20:49:51 +0100
+Subject: [PATCH 6/6] winevulkan: Use VK_EXT_map_memory_placed for memory
+ mapping on wow64.
+
+---
+ dlls/winevulkan/vulkan.c         | 122 +++++++++++++++++++++++++++++--
+ dlls/winevulkan/vulkan_private.h |   2 +
+ 2 files changed, 119 insertions(+), 5 deletions(-)
+
+diff --git a/dlls/winevulkan/vulkan.c b/dlls/winevulkan/vulkan.c
+index 93a36f28469..0a6224476e2 100644
+--- a/dlls/winevulkan/vulkan.c
++++ b/dlls/winevulkan/vulkan.c
+@@ -223,6 +223,7 @@ static void wine_vk_physical_device_free(struct wine_phys_dev *phys_dev)
+ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance *instance,
+         VkPhysicalDevice phys_dev, VkPhysicalDevice handle)
+ {
++    BOOL have_memory_placed = FALSE, have_map_memory2 = FALSE;
+     struct wine_phys_dev *object;
+     uint32_t num_host_properties, num_properties = 0;
+     VkExtensionProperties *host_properties = NULL;
+@@ -281,6 +282,10 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
+         }
+         if (!strcmp(host_properties[i].extensionName, "VK_EXT_external_memory_host"))
+             have_external_memory_host = TRUE;
++        else if (!strcmp(host_properties[i].extensionName, "VK_EXT_map_memory_placed"))
++            have_memory_placed = TRUE;
++        else if (!strcmp(host_properties[i].extensionName, "VK_KHR_map_memory2"))
++            have_map_memory2 = TRUE;
+     }
+ 
+     TRACE("Host supported extensions %u, Wine supported extensions %u\n", num_host_properties, num_properties);
+@@ -301,7 +306,38 @@ static struct wine_phys_dev *wine_vk_physical_device_alloc(struct wine_instance
+     }
+     object->extension_count = num_properties;
+ 
+-    if (use_external_memory() && have_external_memory_host)
++    if (zero_bits && have_memory_placed && have_map_memory2)
++    {
++        VkPhysicalDeviceMapMemoryPlacedFeaturesEXT map_placed_feature =
++        {
++            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT,
++        };
++        VkPhysicalDeviceFeatures2 features =
++        {
++            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
++            .pNext = &map_placed_feature,
++        };
++
++        instance->funcs.p_vkGetPhysicalDeviceFeatures2KHR(phys_dev, &features);
++        if (map_placed_feature.memoryMapPlaced && map_placed_feature.memoryUnmapReserve)
++        {
++            VkPhysicalDeviceMapMemoryPlacedPropertiesEXT map_placed_props =
++            {
++                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT,
++            };
++            VkPhysicalDeviceProperties2 props =
++            {
++                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
++                .pNext = &map_placed_props,
++            };
++
++            instance->funcs.p_vkGetPhysicalDeviceProperties2(phys_dev, &props);
++            object->map_placed_align = map_placed_props.minPlacedMemoryMapAlignment;
++            TRACE( "Using placed map with alignment %u\n", object->map_placed_align );
++        }
++    }
++
++    if (zero_bits && have_external_memory_host && !object->map_placed_align)
+     {
+         VkPhysicalDeviceExternalMemoryHostPropertiesEXT host_mem_props =
+         {
+@@ -425,7 +461,23 @@ static VkResult wine_vk_device_convert_create_info(struct wine_phys_dev *phys_de
+         }
+     }
+ 
+-    if (phys_dev->external_memory_align)
++    if (phys_dev->map_placed_align)
++    {
++        VkPhysicalDeviceMapMemoryPlacedFeaturesEXT *map_placed_features;
++        map_placed_features = conversion_context_alloc(ctx, sizeof(*map_placed_features));
++        map_placed_features->sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
++        map_placed_features->pNext = (void *)dst->pNext;
++        map_placed_features->memoryMapPlaced = VK_TRUE;
++        map_placed_features->memoryMapRangePlaced = VK_FALSE;
++        map_placed_features->memoryUnmapReserve = VK_TRUE;
++        dst->pNext = map_placed_features;
++
++        if (!find_extension(extensions, extensions_count, "VK_EXT_map_memory_placed"))
++            extra_extensions[extra_count++] = "VK_EXT_map_memory_placed";
++        if (!find_extension(extensions, extensions_count, "VK_KHR_map_memory2"))
++            extra_extensions[extra_count++] = "VK_KHR_map_memory2";
++    }
++    else if (phys_dev->external_memory_align)
+     {
+         if (!find_extension(extensions, extensions_count, "VK_KHR_external_memory"))
+             extra_extensions[extra_count++] = "VK_KHR_external_memory";
+@@ -1721,6 +1773,7 @@ VkResult wine_vkAllocateMemory(VkDevice handle, const VkMemoryAllocateInfo *allo
+     }
+ 
+     WINE_VK_ADD_NON_DISPATCHABLE_MAPPING(device->phys_dev->instance, memory, memory->host_memory, memory);
++    memory->size = info.allocationSize;
+     memory->vm_map = mapping;
+     *ret = (VkDeviceMemory)(uintptr_t)memory;
+     return VK_SUCCESS;
+@@ -1735,6 +1788,17 @@ void wine_vkFreeMemory(VkDevice handle, VkDeviceMemory memory_handle, const VkAl
+         return;
+     memory = wine_device_memory_from_handle(memory_handle);
+ 
++    if (memory->vm_map && !device->phys_dev->external_memory_align)
++    {
++        const VkMemoryUnmapInfoKHR info =
++        {
++            .sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR,
++            .memory = memory->host_memory,
++            .flags = VK_MEMORY_UNMAP_RESERVE_BIT_EXT,
++        };
++        device->funcs.p_vkUnmapMemory2KHR(device->host_device, &info);
++    }
++
+     WINE_VK_REMOVE_HANDLE_MAPPING(device->phys_dev->instance, memory);
+     device->funcs.p_vkFreeMemory(device->host_device, memory->host_memory, NULL);
+ 
+@@ -1767,6 +1831,10 @@ VkResult wine_vkMapMemory2KHR(VkDevice handle, const VkMemoryMapInfoKHR *map_inf
+     struct wine_device *device = wine_device_from_handle(handle);
+     struct wine_device_memory *memory = wine_device_memory_from_handle(map_info->memory);
+     VkMemoryMapInfoKHR info = *map_info;
++    VkMemoryMapPlacedInfoEXT placed_info =
++    {
++        .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT,
++    };
+     VkResult result;
+ 
+     info.memory = memory->host_memory;
+@@ -1777,6 +1845,24 @@ VkResult wine_vkMapMemory2KHR(VkDevice handle, const VkMemoryMapInfoKHR *map_inf
+         return VK_SUCCESS;
+     }
+ 
++    if (device->phys_dev->map_placed_align)
++    {
++        SIZE_T alloc_size = memory->size;
++
++        placed_info.pNext = info.pNext;
++        info.pNext = &placed_info;
++        info.offset = 0;
++        info.size = VK_WHOLE_SIZE;
++        info.flags |=  VK_MEMORY_MAP_PLACED_BIT_EXT;
++
++        if (NtAllocateVirtualMemory(GetCurrentProcess(), &placed_info.pPlacedAddress, zero_bits, &alloc_size,
++                                    MEM_RESERVE, PAGE_READWRITE))
++        {
++            ERR("NtAllocateVirtualMemory failed\n");
++            return VK_ERROR_OUT_OF_HOST_MEMORY;
++        }
++    }
++
+     if (device->funcs.p_vkMapMemory2KHR)
+     {
+         result = device->funcs.p_vkMapMemory2KHR(device->host_device, &info, data);
+@@ -1788,6 +1874,20 @@ VkResult wine_vkMapMemory2KHR(VkDevice handle, const VkMemoryMapInfoKHR *map_inf
+                                              info.size, info.flags, data);
+     }
+ 
++    if (placed_info.pPlacedAddress)
++    {
++        if (result != VK_SUCCESS)
++        {
++            SIZE_T alloc_size = 0;
++            ERR("vkMapMemory2EXT failed: %d\n", result);
++            NtFreeVirtualMemory(GetCurrentProcess(), &placed_info.pPlacedAddress, &alloc_size, MEM_RELEASE);
++            return result;
++        }
++        memory->vm_map = placed_info.pPlacedAddress;
++        *data = (char *)memory->vm_map + map_info->offset;
++        TRACE("Using placed mapping %p\n", memory->vm_map);
++    }
++
+ #ifdef _WIN64
+     if (NtCurrentTeb()->WowTebOffset && result == VK_SUCCESS && (UINT_PTR)*data >> 32)
+     {
+@@ -1817,20 +1917,32 @@ VkResult wine_vkUnmapMemory2KHR(VkDevice handle, const VkMemoryUnmapInfoKHR *unm
+     struct wine_device *device = wine_device_from_handle(handle);
+     struct wine_device_memory *memory = wine_device_memory_from_handle(unmap_info->memory);
+     VkMemoryUnmapInfoKHR info;
++    VkResult result;
+ 
+-    if (memory->vm_map)
++    if (memory->vm_map && device->phys_dev->external_memory_align)
+         return VK_SUCCESS;
+ 
+     if (!device->funcs.p_vkUnmapMemory2KHR)
+     {
+-        assert(!unmap_info->pNext);
++        assert(!unmap_info->pNext && !memory->vm_map);
+         device->funcs.p_vkUnmapMemory(device->host_device, memory->host_memory);
+         return VK_SUCCESS;
+     }
+ 
+     info = *unmap_info;
+     info.memory = memory->host_memory;
+-    return device->funcs.p_vkUnmapMemory2KHR(device->host_device, &info);
++    if (memory->vm_map)
++        info.flags |= VK_MEMORY_UNMAP_RESERVE_BIT_EXT;
++
++    result = device->funcs.p_vkUnmapMemory2KHR(device->host_device, &info);
++
++    if (result == VK_SUCCESS && memory->vm_map)
++    {
++        SIZE_T size = 0;
++        NtFreeVirtualMemory(GetCurrentProcess(), &memory->vm_map, &size, MEM_RELEASE);
++        memory->vm_map = NULL;
++    }
++    return result;
+ }
+ 
+ VkResult wine_vkCreateBuffer(VkDevice handle, const VkBufferCreateInfo *create_info,
+diff --git a/dlls/winevulkan/vulkan_private.h b/dlls/winevulkan/vulkan_private.h
+index fd5d58870cc..1697298a3d0 100644
+--- a/dlls/winevulkan/vulkan_private.h
++++ b/dlls/winevulkan/vulkan_private.h
+@@ -130,6 +130,7 @@ struct wine_phys_dev
+     uint32_t extension_count;
+ 
+     uint32_t external_memory_align;
++    uint32_t map_placed_align;
+ 
+     struct wine_vk_mapping mapping;
+ };
+@@ -175,6 +176,7 @@ static inline struct wine_cmd_pool *wine_cmd_pool_from_handle(VkCommandPool hand
+ struct wine_device_memory
+ {
+     VkDeviceMemory host_memory;
++    VkDeviceSize size;
+     void *vm_map;
+ 
+     struct wine_vk_mapping mapping;
+-- 
+2.40.1
+

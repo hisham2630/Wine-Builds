@@ -1,0 +1,20 @@
+diff --git a/dlls/ntdll/unix/thread.c.orig b/dlls/ntdll/unix/thread.c
+index 52cb0f2..7157fda 100644
+--- a/dlls/ntdll/unix/thread.c.orig
++++ b/dlls/ntdll/unix/thread.c
+@@ -1549,7 +1549,14 @@ NTSTATUS WINAPI NtRaiseException( EXCEPTION_RECORD *rec, CONTEXT *context, BOOL
+     else
+         ERR_(seh)("Unhandled exception code %x flags %x addr %p\n",
+                   (int)rec->ExceptionCode, (int)rec->ExceptionFlags, rec->ExceptionAddress );
+-
++// Check the environment variable
++    char *env_var_value = getenv("WINE_NtContiune");
++    if (env_var_value && strcmp(env_var_value, "1") == 0)
++    {
++    	ERR_(seh)("WINE_NtContiune environment variable is set, it's an hack to bypass exception that happens with some games, while it works, but it might break other games\n");
++        return NtContinue(context, FALSE);
++    }
++    
+     NtTerminateProcess( NtCurrentProcess(), rec->ExceptionCode );
+     return STATUS_SUCCESS;
+ }
