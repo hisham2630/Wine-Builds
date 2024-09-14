@@ -28,7 +28,7 @@ fi
 #
 # This variable affects only vanilla and staging branches. Other branches
 # use their own versions.
-export WINE_VERSION="9.3"  ##"${WINE_VERSION:-latest}"
+export WINE_VERSION="9.17"  ##"${WINE_VERSION:-latest}"
 
 # Available branches: vanilla, staging, staging-tkg, proton, wayland
 export WINE_BRANCH="${WINE_BRANCH:-staging}"
